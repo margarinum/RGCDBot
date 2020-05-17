@@ -201,13 +201,6 @@ def getMethodInfo(stand, method):
         if command == method:
             return item
 
-
-def getTestInfo(stand, test):
-    response = requests.get('http://' + getStands()[stand] + apiString + 'tasks')
-    for item in response.json():
-        print(item)
-
-
 def runCommand(command, stand):
     callString = ('http://' + getStands()[stand] + apiString + 'tasks' + command)
     print(callString)
