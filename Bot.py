@@ -6,6 +6,7 @@ import requests
 import wget
 import configparser
 import json
+from emoji import emojize
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -14,12 +15,13 @@ telebot.apihelper.proxy = {'https': config.get('connection', 'proxyConnSting')}
 bot = telebot.TeleBot(config.get('connection', 'teleToken'))
 apiString = ':5000/api/v2.0/'
 CURSTAND = ''
-commandTypes = {'get': '', 'getOpts': 'get=', 'getFile': 'get=', 'setBin': 'set=', 'setInt': 'set='}
+commandTypes = {'get': '', 'getOpts': 'get=', 'getTests': 'get=', 'getFile': 'get=', 'setBin': 'set=', 'setInt': 'set='}
 sequense = {'/current': '/current', '/check': '/check', '/startApp': '/startApp', '/stopApp': '/stopApp',
             '/AppStatus': '/AppStatus', '/AutoDeployStatus': '/AutoDeployStatus',
             '/setAutoDeployStatus': '/setAutoDeployStatus', '/setAutoDeployPeriod': '/setAutoDeployPeriod',
             '/update': '/update', '/containers': '/containerInfo', '/containerInfo': '/download',
-            '/download': '/download'}
+            '/download': '/download', '/autoTests': '/runTest', '/runAllTests': '/runAllTests',
+            '/runTest': '/runTest'}
 binary = {'True': 'true', 'False': 'false'}
 
 
@@ -85,7 +87,7 @@ def startKeyboard():
 def talk(message):
     if checkUsers(message):
         if message.text.lower() == 'серверы':
-            bot.send_message(message.chat.id, "Серверы:", reply_markup=inlineKeyboardStands(getStands().keys()))
+            bot.send_message(message.chat.id, "Серверы:", reply_markup=inlineKeyboardStands(getStands()))
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -97,19 +99,33 @@ def answer(call):
         # if not CURSTAND:
         #     bot.send_message(call.message.chat.id, 'Необходимо выбрать стенд',
         #                      reply_markup=startKeyboard())
-
+        print(call.data)
         if 'stand' in call.data:
             # 'stand' in call.data:
             CURSTAND = call.data.split('_')[1]
             # print(CURSTAND)
-            bot.send_message(call.message.chat.id, "Доступные методы:",
-                             reply_markup=inlineKeyboardMethods(getMethods(CURSTAND)))
+            methods = getMethods(CURSTAND)
+            print(getMethods(CURSTAND))
+            if len(methods) > 0:
+                bot.send_message(call.message.chat.id, "Доступные методы:",
+                                 reply_markup=inlineKeyboardMethods(getMethods(CURSTAND)))
+            else:
+                bot.send_message(call.message.chat.id, "API недоступно")
         if 'help' in call.data:
+            #####ПОЧИНИТЬЬЬЬЬ№№№№№ЫЫЫЫ
+            if 'test' in call.data:
+                pos = call.data.split('_')[2]
+                bot.send_message(call.message.chat.id,
+                                 runCommand('/getTestInfo?get=' + pos, CURSTAND),
+                                 # parse_mode='Markdown',
+                                 reply_markup=inlineKeyBoardBack())
             pos = call.data.split('_')[1]
             for item in getMethods(CURSTAND):
                 if item['id'] == pos:
                     bot.send_message(call.message.chat.id, item['title'], reply_markup=inlineKeyBoardBack())
+
         if 'command' in call.data:
+            print(call.data)
             commandType = call.data.split('_')[1]
             command = call.data.split('_')[2]
             if commandType == 'get':
@@ -127,7 +143,6 @@ def answer(call):
 
                                          )
 
-
             if commandType == 'setBin':
                 bot.send_message(call.message.chat.id,
                                  "Доступные опции: {command}".format(command=command.replace('/', '')),
@@ -138,6 +153,12 @@ def answer(call):
                                  "Доступные опции: {command}".format(command=command.replace('/', '')),
                                  reply_markup=inlineKeyboardOptions(command, commandType,
                                                                     runCommand(command, CURSTAND)))
+            if commandType == 'getTests':
+                command = command.split('?')[0]
+                bot.send_message(call.message.chat.id,
+                                 "Доступные тесты: {command}".format(command=command.replace('/', '')),
+                                 reply_markup=inlineKeyboardTests(command, commandType,
+                                                                  runCommand(command, CURSTAND)))
             if commandType == 'setInt':
                 bot.send_message(call.message.chat.id,
                                  'Set value by keyboard:\n{command} X, where X in minutes'.format(command=command),
@@ -166,8 +187,11 @@ def bolding(text):
 
 
 def getMethods(stand):
-    response = requests.get('http://' + getStands()[stand] + apiString + 'tasks')
-    return response.json()
+    try:
+        response = requests.get('http://' + getStands()[stand] + apiString + 'tasks', verify=False, timeout=2)
+        return response.json()
+    except requests.exceptions.ConnectTimeout:
+        return []
 
 
 def getMethodInfo(stand, method):
@@ -178,8 +202,15 @@ def getMethodInfo(stand, method):
             return item
 
 
+def getTestInfo(stand, test):
+    response = requests.get('http://' + getStands()[stand] + apiString + 'tasks')
+    for item in response.json():
+        print(item)
+
+
 def runCommand(command, stand):
     callString = ('http://' + getStands()[stand] + apiString + 'tasks' + command)
+    print(callString)
     response = requests.get(callString)
     return response.json()
 
@@ -201,19 +232,39 @@ def findDescr(id, file):
 
 def parseAnswer(file):
     retString = ''
+    print(file)
     # print(file)
     for item in file:
-        retString += str(item + ': ' + str(file[item]) + '\n')
+        value = file[item]
+        if value == 'passed':
+            value = '\U00002705'
+        if value == 'failed':
+            value = '\U0000274C'
+        retString += str(item + ': ' + str(value) + '\n')
     return retString
 
 
 def inlineKeyboardStands(dct):
     inlineKeys = telebot.types.InlineKeyboardMarkup()
-    for stand in dct:
+    for stand, adr in dct.items():
+        status = checkAPIStatus(adr)
         inlineKeys.add(
             telebot.types.InlineKeyboardButton(text=stand,
-                                               callback_data='stand_{}'.format(stand)))
+                                               callback_data='stand_{}'.format(stand))
+            , telebot.types.InlineKeyboardButton(text=status, callback_data='stand_{}'.format(stand))
+        )
     return inlineKeys
+
+
+def checkAPIStatus(address):
+    callString = 'http://' + address + apiString
+    try:
+        response = requests.get(callString, verify=False, timeout=2)
+        return "\U0001F7E2"
+        # return 'Online'
+    except requests.exceptions.ConnectTimeout:
+        return "\U0001F534"
+        # return 'Offline'
 
 
 def inlineKeyboardMethods(dct):
@@ -248,10 +299,36 @@ def inlineKeyboardOptions(command, commandType, options):
             callMethod=callMethod,
             command=command,
             option=options[option])
-        # print(callString)
+        print(callString)
         inlineKeys.add(
             telebot.types.InlineKeyboardButton(text=option,
                                                callback_data=callString))
+    inlineKeys.add(telebot.types.InlineKeyboardButton(text='<- Back', callback_data='back'))
+    return inlineKeys
+
+
+def inlineKeyboardTests(command, commandType, options):
+    inlineKeys = telebot.types.InlineKeyboardMarkup()
+    inlineKeys.add(
+        telebot.types.InlineKeyboardButton(text='Запустить все тесты', callback_data='command_get_/runAllTests'))
+    if len(command.split('?')) > 1:
+        command = command.split('?')[0]
+        command = sequense[command]
+    else:
+        command = sequense[command]
+    callMethod = commandTypes[commandType]
+    commandType = getMethodInfo(CURSTAND, command)['type']
+    for test, description in options.items():
+        callString = 'command_{commandType}_{command}?{callMethod}{option}'.format(
+            commandType=commandType,
+            callMethod=callMethod,
+            command=command,
+            option=test)
+        print(callString)
+        inlineKeys.add(telebot.types.InlineKeyboardButton(text=test, callback_data=callString),
+                       telebot.types.InlineKeyboardButton(text='help',
+                                                          callback_data=str(
+                                                              'help_test_{test}'.format(test=test))))
     inlineKeys.add(telebot.types.InlineKeyboardButton(text='<- Back', callback_data='back'))
     return inlineKeys
 
