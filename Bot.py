@@ -99,20 +99,17 @@ def answer(call):
         # if not CURSTAND:
         #     bot.send_message(call.message.chat.id, 'Необходимо выбрать стенд',
         #                      reply_markup=startKeyboard())
-        print(call.data)
         if 'stand' in call.data:
             # 'stand' in call.data:
             CURSTAND = call.data.split('_')[1]
             # print(CURSTAND)
             methods = getMethods(CURSTAND)
-            print(getMethods(CURSTAND))
             if len(methods) > 0:
                 bot.send_message(call.message.chat.id, "Доступные методы:",
                                  reply_markup=inlineKeyboardMethods(getMethods(CURSTAND)))
             else:
                 bot.send_message(call.message.chat.id, "API недоступно")
         if 'help' in call.data:
-            #####ПОЧИНИТЬЬЬЬЬ№№№№№ЫЫЫЫ
             if 'test' in call.data:
                 pos = call.data.split('_')[2]
                 bot.send_message(call.message.chat.id,
@@ -125,7 +122,6 @@ def answer(call):
                     bot.send_message(call.message.chat.id, item['title'], reply_markup=inlineKeyBoardBack())
 
         if 'command' in call.data:
-            print(call.data)
             commandType = call.data.split('_')[1]
             command = call.data.split('_')[2]
             if commandType == 'get':
@@ -203,7 +199,6 @@ def getMethodInfo(stand, method):
 
 def runCommand(command, stand):
     callString = ('http://' + getStands()[stand] + apiString + 'tasks' + command)
-    print(callString)
     response = requests.get(callString)
     return response.json()
 
@@ -225,7 +220,6 @@ def findDescr(id, file):
 
 def parseAnswer(file):
     retString = ''
-    print(file)
     # print(file)
     for item in file:
         value = file[item]
@@ -292,7 +286,6 @@ def inlineKeyboardOptions(command, commandType, options):
             callMethod=callMethod,
             command=command,
             option=options[option])
-        print(callString)
         inlineKeys.add(
             telebot.types.InlineKeyboardButton(text=option,
                                                callback_data=callString))
@@ -317,7 +310,6 @@ def inlineKeyboardTests(command, commandType, options):
             callMethod=callMethod,
             command=command,
             option=test)
-        print(callString)
         inlineKeys.add(telebot.types.InlineKeyboardButton(text=test, callback_data=callString),
                        telebot.types.InlineKeyboardButton(text='help',
                                                           callback_data=str(
