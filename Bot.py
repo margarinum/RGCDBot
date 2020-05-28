@@ -1,4 +1,4 @@
-#!/usr/bin/python3.5
+#!/usr/bin/python3.6
 # -*- coding: utf-8 -*-
 import telebot
 import os
@@ -7,6 +7,7 @@ import wget
 import configparser
 import json
 from emoji import emojize
+from urllib.error import HTTPError
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -15,13 +16,14 @@ telebot.apihelper.proxy = {'https': config.get('connection', 'proxyConnSting')}
 bot = telebot.TeleBot(config.get('connection', 'teleToken'))
 apiString = ':5000/api/v2.0/'
 CURSTAND = ''
+tab = '        '
 commandTypes = {'get': '', 'getOpts': 'get=', 'getTests': 'get=', 'getFile': 'get=', 'setBin': 'set=', 'setInt': 'set='}
 sequense = {'/current': '/current', '/check': '/check', '/startApp': '/startApp', '/stopApp': '/stopApp',
             '/AppStatus': '/AppStatus', '/AutoDeployStatus': '/AutoDeployStatus',
             '/setAutoDeployStatus': '/setAutoDeployStatus', '/setAutoDeployPeriod': '/setAutoDeployPeriod',
             '/update': '/update', '/containers': '/containerInfo', '/containerInfo': '/download',
             '/download': '/download', '/autoTests': '/runTest', '/runAllTests': '/runAllTests',
-            '/runTest': '/runTest'}
+            '/runTest': '/getTestReport'}
 binary = {'True': 'true', 'False': 'false'}
 
 
@@ -83,6 +85,40 @@ def startKeyboard():
     return markup
 
 
+@bot.message_handler(content_types=['document'])
+def sendTestFile(message):
+    if message.document:
+        fileName = message.document.file_name
+        if '.feature' in fileName:
+            if CURSTAND:
+                # file_id = message.document.file_name
+                file_id_info = bot.get_file(message.document.file_id)
+                downloaded_file = bot.download_file(file_id_info.file_path)
+                with open(fileName, 'wb') as new_file:
+                    new_file.write(downloaded_file)
+                bot.send_message(message.chat.id, 'Файл получен')
+                bot.send_message(message.chat.id, 'Направляю на {}'.format(CURSTAND))
+                with open('./{}'.format(fileName), 'rb') as file:
+                    url = 'http://{url}{apiStr}tasks/uploadTestFile'.format(url=getStands()[CURSTAND], apiStr=apiString)
+                    files = {
+                        'file': ('./{}'.format(fileName), file),
+                    }
+                    # headers = {'enctype': 'multipart/form-data'}
+                    # print(url)
+                    # resp = requests.post(url, headers=headers, data={"file": '@./{}'.format(fileName)})
+                    resp = requests.post(url, files=files)
+
+                    print(resp.text)
+                os.remove(fileName)
+
+
+            else:
+                bot.send_message(message.chat.id, 'Необходимо выбрать стенд и попробовать еще раз',
+                                 reply_markup=startKeyboard())
+        else:
+            bot.send_message(message.chat.id, 'Я принимаю только файлы с расширением \'.feature\'')
+
+
 @bot.message_handler(content_types=['text'])
 def talk(message):
     if checkUsers(message):
@@ -127,8 +163,10 @@ def answer(call):
             if commandType == 'get':
                 method = command.split('?')[0]
                 if method == sequense[method]:
+                    answer = runCommand(command, CURSTAND)
+                    parsedAnswer = parseAnswer(answer)
                     bot.send_message(call.message.chat.id,
-                                     command.replace('/', '') + ':\n' + parseAnswer(runCommand(command, CURSTAND)),
+                                     command.replace('/', '') + ':\n' + parsedAnswer,
                                      # parse_mode='Markdown',
                                      reply_markup=inlineKeyBoardBack())
                 else:
@@ -136,8 +174,15 @@ def answer(call):
                         bot.send_message(call.message.chat.id,
                                          command.replace('/', '') + ':\n' + parseAnswer(runCommand(command, CURSTAND)),
                                          reply_markup=inlineKeyboardDownload(sequense[method], command.split('?')[1])
-
                                          )
+            if commandType == 'getTestReport':
+                method = command.split('?')[0]
+                message = bot.send_message(call.message.chat.id, 'Тесты выполняются...')
+                answer = command.replace('/', '') + ':\n' + parseTestReport(runCommand(command, CURSTAND))
+                if answer:
+                    bot.delete_message(message_id=message.message_id, chat_id=call.message.chat.id)
+                    bot.send_message(call.message.chat.id, answer,
+                                     reply_markup=inlineKeyboardDownload(sequense[method], command.split('?')[1]))
 
             if commandType == 'setBin':
                 bot.send_message(call.message.chat.id,
@@ -161,15 +206,21 @@ def answer(call):
                                  reply_markup=inlineKeyBoardBack())
             if commandType == 'getFile':
                 name = getFile(command, CURSTAND)
-                size = os.stat(name).st_size
-                with open(name, 'rb') as file:
-                    if size > 0:
-                        bot.send_document(call.message.chat.id, open(name, 'r'), reply_markup=inlineKeyBoardBack())
-                    else:
-                        bot.send_message(call.message.chat.id,
-                                         'Файл логов пуст',
-                                         reply_markup=inlineKeyBoardBack())
-                os.remove(name)
+                print(name)
+                if isinstance(name, str):
+                    size = os.stat(name).st_size
+                    with open(name, 'rb') as file:
+                        if size > 0:
+                            bot.send_document(call.message.chat.id, open(name, 'r'), reply_markup=inlineKeyBoardBack())
+                        else:
+                            bot.send_message(call.message.chat.id,
+                                             'Файл логов пуст',
+                                             reply_markup=inlineKeyBoardBack())
+                    os.remove(name)
+                else:
+                    bot.send_message(call.message.chat.id,
+                                     parseAnswer(name),
+                                     reply_markup=inlineKeyBoardBack())
 
         if 'back' in call.data:
             bot.delete_message(message_id=call.message.message_id, chat_id=call.message.chat.id)
@@ -197,10 +248,14 @@ def getMethodInfo(stand, method):
         if command == method:
             return item
 
+
 def runCommand(command, stand):
     callString = ('http://' + getStands()[stand] + apiString + 'tasks' + command)
     response = requests.get(callString)
-    return response.json()
+    if response.status_code == 200:
+        return response.json()
+    else:
+        return {'Error': response.status_code}
 
 
 def getFile(params, stand):
@@ -208,8 +263,11 @@ def getFile(params, stand):
     # id = params.split('=')[0]
     # fileName = id + ":" + (
     # datetime.datetime.strftime(datetime.datetime.today(), "%d%m%Y-%H%M%S")) + '.log'
-    name = wget.download(callString, '')
-    return name
+    try:
+        name = wget.download(callString, '')
+        return name
+    except HTTPError as e:
+        return {'Error': e.read()}
 
 
 def findDescr(id, file):
@@ -220,15 +278,24 @@ def findDescr(id, file):
 
 def parseAnswer(file):
     retString = ''
-    # print(file)
     for item in file:
         value = file[item]
-        if value == 'passed':
-            value = '\U00002705'
-        if value == 'failed':
-            value = '\U0000274C'
         retString += str(item + ': ' + str(value) + '\n')
     return retString
+
+
+def parseTestReport(file):
+    retString = ''
+    for dct in file:
+        if isinstance(dct, dict):
+            for item in dct:
+                if not item == "Scenarios":
+                    retString = retString + str(item + ': ' + dct[item])
+                if item == "Scenarios":
+                    for key, value in dict(dct[item]).items():
+                        retString = retString + '\n' + str(tab + key + ': ' + value)
+        retString = retString.replace('passed', '\U00002705').replace('failed', '\U0000274C')
+        return retString
 
 
 def inlineKeyboardStands(dct):
@@ -295,8 +362,9 @@ def inlineKeyboardOptions(command, commandType, options):
 
 def inlineKeyboardTests(command, commandType, options):
     inlineKeys = telebot.types.InlineKeyboardMarkup()
-    inlineKeys.add(
-        telebot.types.InlineKeyboardButton(text='Запустить все тесты', callback_data='command_get_/runAllTests'))
+    # inlineKeys.add(
+    #     telebot.types.InlineKeyboardButton(text='Запустить все тесты',
+    #                                        callback_data='command_getTestReport_/runAllTests'))
     if len(command.split('?')) > 1:
         command = command.split('?')[0]
         command = sequense[command]
@@ -310,6 +378,7 @@ def inlineKeyboardTests(command, commandType, options):
             callMethod=callMethod,
             command=command,
             option=test)
+
         inlineKeys.add(telebot.types.InlineKeyboardButton(text=test, callback_data=callString),
                        telebot.types.InlineKeyboardButton(text='help',
                                                           callback_data=str(
